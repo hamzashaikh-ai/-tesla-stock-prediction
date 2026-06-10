@@ -8,7 +8,7 @@
    "outputs": [],
    "source": [
     "streamlit\n",
-    "tensorflow\n",
+    "tensorflow-cpu\n",
     "plotly\n",
     "scikit-learn\n",
     "pandas\n",
