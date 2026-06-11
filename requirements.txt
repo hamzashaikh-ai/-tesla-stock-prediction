@@ -1,5 +1,5 @@
 streamlit
-tf-keras
+onnxruntime
 plotly
 scikit-learn
 pandas

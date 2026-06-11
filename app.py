@@ -4,8 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import joblib
-import tf_keras as keras
-from tf_keras.models import load_model
+import onnxruntime as ort
 
 # ── Page Config ────────────────────────────────────────────────
 st.set_page_config(
@@ -24,14 +23,22 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# ── ONNX Predict Helper ────────────────────────────────────────
+def onnx_predict(session, X):
+    """Run inference on an ONNX model session."""
+    input_name = session.get_inputs()[0].name
+    result = session.run(None, {input_name: X.astype(np.float32)})
+    return result[0]
+
+
 # ── Load Resources ─────────────────────────────────────────────
 @st.cache_resource
 def load_resources():
     models = {
-        "SimpleRNN (default)" : load_model("simplernn_default.keras"),
-        "SimpleRNN (tuned)"   : load_model("simplernn_tuned.keras"),
-        "LSTM (default)"      : load_model("lstm_default.keras"),
-        "LSTM (tuned)"        : load_model("lstm_tuned.keras"),
+        "SimpleRNN (default)" : ort.InferenceSession("simplernn_default.onnx"),
+        "SimpleRNN (tuned)"   : ort.InferenceSession("simplernn_tuned.onnx"),
+        "LSTM (default)"      : ort.InferenceSession("lstm_default.onnx"),
+        "LSTM (tuned)"        : ort.InferenceSession("lstm_tuned.onnx"),
     }
     scaler = joblib.load("scaler.pkl")
     return models, scaler
@@ -57,12 +64,12 @@ def create_sequences(data, window_size=60):
     return X, y
 
 
-def predict_n_days(model, last_sequence, n_days, scaler, window_size=60):
+def predict_n_days(session, last_sequence, n_days, scaler, window_size=60):
     predictions = []
     current_seq = last_sequence.copy()
     for _ in range(n_days):
         input_seq   = current_seq.reshape(1, window_size, 1)
-        next_scaled = model.predict(input_seq, verbose=0)
+        next_scaled = onnx_predict(session, input_seq)
         next_price  = scaler.inverse_transform(next_scaled)[0][0]
         predictions.append(float(next_price))
         current_seq = np.append(
@@ -160,10 +167,10 @@ all_time_high = float(df["Close"].max())
 total_days    = len(df)
 price_change  = float(df["Close"].iloc[-1] - df["Close"].iloc[-2])
 
-c1.metric("Last Close Price",   f"${last_close:.2f}",    f"{price_change:+.2f}")
+c1.metric("Last Close Price",   f"${last_close:.2f}",  f"{price_change:+.2f}")
 c2.metric("All Time High",      f"${all_time_high:.2f}")
 c3.metric("Total Trading Days", f"{total_days:,}")
-c4.metric("Best Model R²",      "0.9275",                "LSTM Tuned")
+c4.metric("Best Model R²",      "0.9275",              "LSTM Tuned")
 
 st.divider()
 
@@ -194,7 +201,6 @@ with tab1:
     )
 
     fig1 = go.Figure()
-
     fig1.add_trace(go.Scatter(
         x=df.index, y=df["Close"],
         name="Close Price",
@@ -251,8 +257,8 @@ with tab1:
 with tab2:
     st.subheader(f"Actual vs Predicted — {selected_model}")
 
-    model       = models[selected_model]
-    pred_scaled = model.predict(X_test, verbose=0)
+    session     = models[selected_model]
+    pred_scaled = onnx_predict(session, X_test)
     pred_prices = scaler.inverse_transform(pred_scaled).flatten()
     actual_flat = y_test_actual.flatten()
 
@@ -305,15 +311,14 @@ with tab3:
     day_label = f"{horizon} Day{'s' if horizon > 1 else ''} Ahead"
     st.subheader(f"Future Price Forecast — {day_label} | {selected_model}")
 
-    model        = models[selected_model]
+    session      = models[selected_model]
     last_seq     = test_scaled[-WINDOW_SIZE:]
-    future_preds = predict_n_days(model, last_seq, horizon, scaler)
+    future_preds = predict_n_days(session, last_seq, horizon, scaler)
     last_price   = float(y_test_actual[-1][0])
 
     st.markdown(f"**Last known closing price: `${last_price:.2f}`**")
     st.markdown(" ")
 
-    # Day-by-day metric cards
     num_cols  = min(horizon, 5)
     pred_cols = st.columns(num_cols)
 
@@ -328,7 +333,6 @@ with tab3:
 
     st.markdown(" ")
 
-    # Forecast chart
     last_60 = scaler.inverse_transform(
         test_scaled[-WINDOW_SIZE:]
     ).flatten()
@@ -339,14 +343,12 @@ with tab3:
 
     fig3 = go.Figure()
     fig3.add_trace(go.Scatter(
-        x=x_hist,
-        y=last_60,
+        x=x_hist, y=last_60,
         name="Last 60 days (actual)",
         line=dict(color="#1f77b4", width=2)
     ))
     fig3.add_trace(go.Scatter(
-        x=x_pred,
-        y=y_pred,
+        x=x_pred, y=y_pred,
         name=f"{horizon}-day forecast",
         line=dict(color="#2ca02c", width=2.5, dash="dash"),
         mode="lines+markers",
