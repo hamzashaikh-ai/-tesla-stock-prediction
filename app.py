@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import joblib
 import onnxruntime as ort
+import os
 
 # ── Page Config ────────────────────────────────────────────────
 st.set_page_config(
@@ -32,6 +33,22 @@ def onnx_predict(session, X):
 
 
 # ── Load Resources ─────────────────────────────────────────────
+import os
+
+@st.cache_resource
+def load_resources():
+    # Get the directory where app.py lives
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    models = {
+        "SimpleRNN (default)" : ort.InferenceSession(os.path.join(base_dir, "simplernn_default.onnx")),
+        "SimpleRNN (tuned)"   : ort.InferenceSession(os.path.join(base_dir, "simplernn_tuned.onnx")),
+        "LSTM (default)"      : ort.InferenceSession(os.path.join(base_dir, "lstm_default.onnx")),
+        "LSTM (tuned)"        : ort.InferenceSession(os.path.join(base_dir, "lstm_tuned.onnx")),
+    }
+    scaler = joblib.load(os.path.join(base_dir, "scaler.pkl"))
+    return models, scaler
+    
 @st.cache_resource
 def load_resources():
     models = {
